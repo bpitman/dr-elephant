@@ -52,3 +52,6 @@ RUNNING_PID
 .DS_Store
 
 *.jar
+
+# rbcommons
+.pdreview
