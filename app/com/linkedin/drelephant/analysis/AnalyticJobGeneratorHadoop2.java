@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Queue;
 import java.util.Random;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import models.AppResult;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.authentication.client.AuthenticatedURL;
 import org.apache.hadoop.security.authentication.client.AuthenticationException;
@@ -208,9 +207,9 @@ public class AnalyticJobGeneratorHadoop2 implements AnalyticJobGenerator {
     for (JsonNode app : apps) {
       String appId = app.get("id").getValueAsText();
 
-      // When called first time after launch, hit the DB and avoid duplicated analytic jobs that have been analyzed
-      // before.
-      if (_lastTime > 0 || (_lastTime == 0 && AppResult.find.byId(appId) == null)) {
+      // NOTE(sgupta): Removing the AppResult.find.byId(appId) == null) here because we don't have db.
+      // TODO(sgupta): Implement this check at the EC2 backend side.
+      if (_lastTime >= 0) {
         String user = app.get("user").getValueAsText();
         String name = app.get("name").getValueAsText();
         String queueName = app.get("queue").getValueAsText();

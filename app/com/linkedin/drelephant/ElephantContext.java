@@ -23,19 +23,13 @@ import com.linkedin.drelephant.analysis.ElephantFetcher;
 import com.linkedin.drelephant.analysis.HadoopApplicationData;
 import com.linkedin.drelephant.analysis.HadoopMetricsAggregator;
 import com.linkedin.drelephant.analysis.Heuristic;
-import com.linkedin.drelephant.analysis.HeuristicResult;
 import com.linkedin.drelephant.analysis.JobType;
-import com.linkedin.drelephant.configurations.aggregator.AggregatorConfiguration;
-import com.linkedin.drelephant.configurations.aggregator.AggregatorConfigurationData;
 import com.linkedin.drelephant.configurations.fetcher.FetcherConfiguration;
 import com.linkedin.drelephant.configurations.fetcher.FetcherConfigurationData;
-import com.linkedin.drelephant.configurations.heuristic.HeuristicConfiguration;
 import com.linkedin.drelephant.configurations.heuristic.HeuristicConfigurationData;
 import com.linkedin.drelephant.configurations.jobtype.JobTypeConfiguration;
-import com.linkedin.drelephant.mapreduce.MapReduceMetricsAggregator;
 import com.linkedin.drelephant.util.Utils;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -47,7 +41,6 @@ import java.util.Set;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.log4j.Logger;
-import org.apache.spark.SparkMetricsAggregator;
 import org.w3c.dom.Document;
 import play.api.templates.Html;
 
@@ -62,9 +55,7 @@ public class ElephantContext {
   private static final Logger logger = Logger.getLogger(ElephantContext.class);
   private static ElephantContext INSTANCE;
 
-  private static final String AGGREGATORS_CONF = "AggregatorConf.xml";
   private static final String FETCHERS_CONF = "FetcherConf.xml";
-  private static final String HEURISTICS_CONF = "HeuristicConf.xml";
   private static final String JOB_TYPES_CONF = "JobTypeConf.xml";
   private static final String GENERAL_CONF = "GeneralConf.xml";
 
@@ -72,7 +63,6 @@ public class ElephantContext {
   private List<HeuristicConfigurationData> _heuristicsConfData;
   private List<FetcherConfigurationData> _fetchersConfData;
   private Configuration _generalConf;
-  private List<AggregatorConfigurationData> _aggregatorConfData;
 
   private final Map<String, ApplicationType> _nameToType = new HashMap<String, ApplicationType>();
   private final Map<ApplicationType, List<Heuristic>> _typeToHeuristics = new HashMap<ApplicationType, List<Heuristic>>();
@@ -98,11 +88,8 @@ public class ElephantContext {
   }
 
   private void loadConfiguration() {
-    loadAggregators();
     loadFetchers();
-    loadHeuristics();
     loadJobTypes();
-
     loadGeneralConf();
 
     // It is important to configure supported types in the LAST step so that we could have information from all
@@ -110,42 +97,6 @@ public class ElephantContext {
     configureSupportedApplicationTypes();
   }
 
-
-  private void loadAggregators() {
-    Document document = Utils.loadXMLDoc(AGGREGATORS_CONF);
-
-    _aggregatorConfData = new AggregatorConfiguration(document.getDocumentElement()).getAggregatorsConfigurationData();
-    for (AggregatorConfigurationData data : _aggregatorConfData) {
-      try {
-        Class<?> aggregatorClass = Class.forName(data.getClassName());
-        Object instance = aggregatorClass.getConstructor(AggregatorConfigurationData.class).newInstance(data);
-        if (!(instance instanceof HadoopMetricsAggregator)) {
-          throw new IllegalArgumentException(
-              "Class " + aggregatorClass.getName() + " is not an implementation of " + HadoopMetricsAggregator.class.getName());
-        }
-
-        ApplicationType type = data.getAppType();
-        if (_typeToAggregator.get(type) == null) {
-          _typeToAggregator.put(type, (HadoopMetricsAggregator) instance);
-        }
-
-        logger.info("Load Aggregator : " + data.getClassName());
-      } catch (ClassNotFoundException e) {
-        throw new RuntimeException("Could not find class " + data.getClassName(), e);
-      } catch (InstantiationException e) {
-        throw new RuntimeException("Could not instantiate class " + data.getClassName(), e);
-      } catch (IllegalAccessException e) {
-        throw new RuntimeException("Could not access constructor for class" + data.getClassName(), e);
-      } catch (RuntimeException e) {
-        throw new RuntimeException(data.getClassName() + " is not a valid Aggregator class.", e);
-      } catch (InvocationTargetException e) {
-        throw new RuntimeException("Could not invoke class " + data.getClassName(), e);
-      } catch (NoSuchMethodException e) {
-        throw new RuntimeException("Could not find constructor for class " + data.getClassName(), e);
-      }
-    }
-
-  }
   /**
    * Load all the fetchers configured in FetcherConf.xml
    */
@@ -185,77 +136,6 @@ public class ElephantContext {
   }
 
   /**
-   * Load all the heuristics and their views configured in HeuristicConf.xml
-   */
-  private void loadHeuristics() {
-    Document document = Utils.loadXMLDoc(HEURISTICS_CONF);
-
-    _heuristicsConfData = new HeuristicConfiguration(document.getDocumentElement()).getHeuristicsConfigurationData();
-    for (HeuristicConfigurationData data : _heuristicsConfData) {
-
-      // Load all the heuristic classes
-      try {
-        Class<?> heuristicClass = Class.forName(data.getClassName());
-
-        Object instance = heuristicClass.getConstructor(HeuristicConfigurationData.class).newInstance(data);
-        if (!(instance instanceof Heuristic)) {
-          throw new IllegalArgumentException(
-              "Class " + heuristicClass.getName() + " is not an implementation of " + Heuristic.class.getName());
-        }
-        ApplicationType type = data.getAppType();
-        List<Heuristic> heuristics = _typeToHeuristics.get(type);
-        if (heuristics == null) {
-          heuristics = new ArrayList<Heuristic>();
-          _typeToHeuristics.put(type, heuristics);
-        }
-        heuristics.add((Heuristic) instance);
-
-        logger.info("Load Heuristic : " + data.getClassName());
-      } catch (ClassNotFoundException e) {
-        throw new RuntimeException("Could not find class " + data.getClassName(), e);
-      } catch (InstantiationException e) {
-        throw new RuntimeException("Could not instantiate class " + data.getClassName(), e);
-      } catch (IllegalAccessException e) {
-        throw new RuntimeException("Could not access constructor for class" + data.getClassName(), e);
-      } catch (RuntimeException e) {
-        // More descriptive on other runtime exception such as ClassCastException
-        throw new RuntimeException(data.getClassName() + " is not a valid Heuristic class.", e);
-      } catch (InvocationTargetException e) {
-        throw new RuntimeException("Could not invoke class " + data.getClassName(), e);
-      } catch (NoSuchMethodException e) {
-        throw new RuntimeException("Could not find constructor for class " + data.getClassName(), e);
-      }
-
-      // Load all the heuristic views
-      try {
-        Class<?> viewClass = Class.forName(data.getClassName());
-
-        Method render = viewClass.getDeclaredMethod("render");
-        Html page = (Html) render.invoke(null);
-        _heuristicToView.put(data.getHeuristicName(), page);
-
-        logger.info("Load View : " + data.getViewName());
-      } catch (ClassNotFoundException e) {
-        throw new RuntimeException("Could not find view " + data.getViewName(), e);
-      } catch (IllegalAccessException e) {
-        throw new RuntimeException("Could not access render on view" + data.getViewName(), e);
-      } catch (RuntimeException e) {
-        // More descriptive on other runtime exception such as ClassCastException
-        throw new RuntimeException(data.getViewName() + " is not a valid view class.", e);
-      } catch (InvocationTargetException e) {
-        throw new RuntimeException("Could not invoke view " + data.getViewName(), e);
-      } catch (NoSuchMethodException e) {
-        throw new RuntimeException("Could not find method render for view " + data.getViewName(), e);
-      }
-    }
-
-    // Bind No_DATA heuristic to its helper pages, no need to add any real configurations
-    _heuristicsConfData.add(
-        new HeuristicConfigurationData(HeuristicResult.NO_DATA.getHeuristicName(),
-            HeuristicResult.NO_DATA.getHeuristicClassName(), "views.html.help.helpNoData", null, null));
-  }
-
-  /**
    * Decides what application types can be supported.
    *
    * An application type is supported if all the below are true.
@@ -264,29 +144,18 @@ public class ElephantContext {
    * 3. At least one job type is configured in JobTypeConf.xml for the application type.
    */
   private void configureSupportedApplicationTypes() {
-    Set<ApplicationType> supportedTypes = Sets.intersection(_typeToFetcher.keySet(), _typeToHeuristics.keySet());
-    supportedTypes = Sets.intersection(supportedTypes, _appTypeToJobTypes.keySet());
-    supportedTypes = Sets.intersection(supportedTypes, _typeToAggregator.keySet());
+    Set<ApplicationType> supportedTypes = Sets.intersection(_typeToFetcher.keySet(), _appTypeToJobTypes.keySet());
 
-    _typeToAggregator.keySet().retainAll(supportedTypes);
     _typeToFetcher.keySet().retainAll(supportedTypes);
-    _typeToHeuristics.keySet().retainAll(supportedTypes);
     _appTypeToJobTypes.keySet().retainAll(supportedTypes);
 
     logger.info("Configuring ElephantContext...");
     for (ApplicationType type : supportedTypes) {
       _nameToType.put(type.getName(), type);
 
-      List<String> classes = new ArrayList<String>();
-      List<Heuristic> heuristics = _typeToHeuristics.get(type);
-      for (Heuristic heuristic : heuristics) {
-        classes.add(heuristic.getClass().getName());
-      }
-
       List<JobType> jobTypes = _appTypeToJobTypes.get(type);
       logger.info("Supports " + type.getName() + " application type, using " + _typeToFetcher.get(type).toString()
-          + " fetcher class with Heuristics [" + StringUtils.join(classes, ", ") + "] and following JobTypes ["
-          + StringUtils.join(jobTypes, ", ") + "].");
+          + " fetcher class with JobTypes [" + StringUtils.join(jobTypes, ", ") + "].");
     }
   }
 
