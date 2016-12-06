@@ -16,14 +16,6 @@
 
 package com.linkedin.drelephant.analysis;
 
-import com.linkedin.drelephant.ElephantContext;
-import com.linkedin.drelephant.util.InfoExtractor;
-import com.linkedin.drelephant.util.Utils;
-import java.util.ArrayList;
-import java.util.List;
-import models.AppHeuristicResult;
-import models.AppHeuristicResultDetails;
-import models.AppResult;
 import org.apache.log4j.Logger;
 
 
@@ -32,9 +24,7 @@ import org.apache.log4j.Logger;
  * same regardless of hadoop versions and application types), and then promises to return the analyzed result later.
  */
 public class AnalyticJob {
-  private static final Logger logger = Logger.getLogger(AnalyticJob.class);
 
-  private static final String UNKNOWN_JOB_TYPE = "Unknown";   // The default job type when the data matches nothing.
   private static final int _RETRY_LIMIT = 3;                  // Number of times a job needs to be tried before dropping
 
   private int _retries = 0;
@@ -215,96 +205,6 @@ public class AnalyticJob {
   public AnalyticJob setTrackingUrl(String trackingUrl) {
     _trackingUrl = trackingUrl;
     return this;
-  }
-
-  /**
-   * Returns the analysed AppResult that could be directly serialized into DB.
-   *
-   * This method fetches the data using the appropriate application fetcher, runs all the heuristics on them and
-   * loads it into the AppResult model.
-   *
-   * @throws Exception if the analysis process encountered a problem.
-   * @return the analysed AppResult
-   */
-  public AppResult getAnalysis() throws Exception {
-    ElephantFetcher fetcher = ElephantContext.instance().getFetcherForApplicationType(getAppType());
-    HadoopApplicationData data = fetcher.fetchData(this);
-
-    // Run all heuristics over the fetched data
-    List<HeuristicResult> analysisResults = new ArrayList<HeuristicResult>();
-    if (data == null || data.isEmpty()) {
-      // Example: a MR job has 0 mappers and 0 reducers
-      logger.info("No Data Received for analytic job: " + getAppId());
-      analysisResults.add(HeuristicResult.NO_DATA);
-    } else {
-      List<Heuristic> heuristics = ElephantContext.instance().getHeuristicsForApplicationType(getAppType());
-      for (Heuristic heuristic : heuristics) {
-        HeuristicResult result = heuristic.apply(data);
-        if (result != null) {
-          analysisResults.add(result);
-        }
-      }
-    }
-
-    JobType jobType = ElephantContext.instance().matchJobType(data);
-    String jobTypeName = jobType == null ? UNKNOWN_JOB_TYPE : jobType.getName();
-
-    HadoopMetricsAggregator hadoopMetricsAggregator = ElephantContext.instance().getAggregatorForApplicationType(getAppType());
-    hadoopMetricsAggregator.aggregate(data);
-    HadoopAggregatedData hadoopAggregatedData = hadoopMetricsAggregator.getResult();
-
-    // Load app information
-    AppResult result = new AppResult();
-    result.id = Utils.truncateField(getAppId(), AppResult.ID_LIMIT, getAppId());
-    result.trackingUrl = Utils.truncateField(getTrackingUrl(), AppResult.TRACKING_URL_LIMIT, getAppId());
-    result.queueName = Utils.truncateField(getQueueName(), AppResult.QUEUE_NAME_LIMIT, getAppId());
-    result.username = Utils.truncateField(getUser(), AppResult.USERNAME_LIMIT, getAppId());
-    result.startTime = getStartTime();
-    result.finishTime = getFinishTime();
-    result.name = Utils.truncateField(getName(), AppResult.APP_NAME_LIMIT, getAppId());
-    result.jobType = Utils.truncateField(jobTypeName, AppResult.JOBTYPE_LIMIT, getAppId());
-    result.resourceUsed = hadoopAggregatedData.getResourceUsed();
-    result.totalDelay = hadoopAggregatedData.getTotalDelay();
-    result.resourceWasted = hadoopAggregatedData.getResourceWasted();
-
-    // Load App Heuristic information
-    int jobScore = 0;
-    result.yarnAppHeuristicResults = new ArrayList<AppHeuristicResult>();
-    Severity worstSeverity = Severity.NONE;
-    for (HeuristicResult heuristicResult : analysisResults) {
-      AppHeuristicResult detail = new AppHeuristicResult();
-      detail.heuristicClass = Utils.truncateField(heuristicResult.getHeuristicClassName(),
-          AppHeuristicResult.HEURISTIC_CLASS_LIMIT, getAppId());
-      detail.heuristicName = Utils.truncateField(heuristicResult.getHeuristicName(),
-          AppHeuristicResult.HEURISTIC_NAME_LIMIT, getAppId());
-      detail.severity = heuristicResult.getSeverity();
-      detail.score = heuristicResult.getScore();
-
-      // Load Heuristic Details
-      for (HeuristicResultDetails heuristicResultDetails : heuristicResult.getHeuristicResultDetails()) {
-        AppHeuristicResultDetails heuristicDetail = new AppHeuristicResultDetails();
-        heuristicDetail.yarnAppHeuristicResult = detail;
-        heuristicDetail.name = Utils.truncateField(heuristicResultDetails.getName(),
-            AppHeuristicResultDetails.NAME_LIMIT, getAppId());
-        heuristicDetail.value = Utils.truncateField(heuristicResultDetails.getValue(),
-            AppHeuristicResultDetails.VALUE_LIMIT, getAppId());
-        heuristicDetail.details = Utils.truncateField(heuristicResultDetails.getDetails(),
-            AppHeuristicResultDetails.DETAILS_LIMIT, getAppId());
-        // This was added for AnalyticTest. Commenting this out to fix a bug. Also disabling AnalyticJobTest.
-        //detail.yarnAppHeuristicResultDetails = new ArrayList<AppHeuristicResultDetails>();
-        detail.yarnAppHeuristicResultDetails.add(heuristicDetail);
-      }
-      result.yarnAppHeuristicResults.add(detail);
-      worstSeverity = Severity.max(worstSeverity, detail.severity);
-      jobScore += detail.score;
-    }
-    result.severity = worstSeverity;
-    result.score = jobScore;
-
-    // Retrieve information from job configuration like scheduler information and store them into result.
-    InfoExtractor.loadInfo(result, data);
-
-    return result;
   }
 
   /**

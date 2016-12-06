@@ -116,7 +116,9 @@ public class AnalyticJobTest {
       }};
 
       // Call the method under test
-      AppResult result = analyticJob.getAnalysis();
+      ElephantFetcher fetcher = elephantContext.getFetcherForApplicationType(analyticJob.getAppType());
+      HadoopApplicationData hadoopApplicationData = fetcher.fetchData(analyticJob);
+      AppResult result = JobAnalysisHelper.getAnalysisResult(hadoopApplicationData, analyticJob);
 
       // Make assertions on result
       assertTrue("Result is null", result != null);

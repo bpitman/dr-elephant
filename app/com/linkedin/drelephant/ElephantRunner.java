@@ -20,10 +20,12 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 import com.linkedin.drelephant.analysis.AnalyticJob;
 import com.linkedin.drelephant.analysis.AnalyticJobGenerator;
+import com.linkedin.drelephant.analysis.ElephantFetcher;
 import com.linkedin.drelephant.analysis.HDFSContext;
+import com.linkedin.drelephant.analysis.HadoopApplicationData;
 import com.linkedin.drelephant.analysis.HadoopSystemContext;
 import com.linkedin.drelephant.analysis.AnalyticJobGeneratorHadoop2;
-
+import com.linkedin.drelephant.analysis.JobAnalysisHelper;
 import com.linkedin.drelephant.security.HadoopSecurity;
 
 import controllers.MetricsController;
@@ -171,10 +173,14 @@ public class ElephantRunner implements Runnable {
     @Override
     public void run() {
       try {
-        String analysisName = String.format("%s %s", _analyticJob.getAppType().getName(), _analyticJob.getAppId());
+        String analysisName = String.format("%s %s", _analyticJob.getAppType().getName(),
+            _analyticJob.getAppId());
         long analysisStartTimeMillis = System.currentTimeMillis();
         logger.info(String.format("Analyzing %s", analysisName));
-        AppResult result = _analyticJob.getAnalysis();
+        ElephantFetcher fetcher =
+            ElephantContext.instance().getFetcherForApplicationType(_analyticJob.getAppType());
+        HadoopApplicationData hadoopApplicationData = fetcher.fetchData(_analyticJob);
+        AppResult result = JobAnalysisHelper.getAnalysisResult(hadoopApplicationData, _analyticJob);
         result.save();
         long processingTime = System.currentTimeMillis() - analysisStartTimeMillis;
         logger.info(String.format("Analysis of %s took %sms", analysisName, processingTime));
