@@ -56,7 +56,7 @@ public class AnalyticJobGeneratorHadoop2 implements AnalyticJobGenerator {
       Statistics.MINUTE_IN_MS * 30 + new Random().nextLong() % (3 * Statistics.MINUTE_IN_MS);
 
   private String _resourceManagerAddress;
-  private long _lastTime = 0;
+  private long _lastTime = System.currentTimeMillis() - FETCH_DELAY;
   private long _currentTime = 0;
   private long _tokenUpdatedTime = 0;
   private AuthenticatedURL.Token _token;
